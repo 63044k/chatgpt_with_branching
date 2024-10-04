@@ -1,0 +1,431 @@
+<!--
+LLM interaction with branching.
+Copyright (C) 2024 Geoff Kimm
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the “Software”), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED “AS IS”, WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+-->
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ChatGPTree</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 0;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #f4f4f4;
+        }
+
+        .chat-container {
+            width: 600px;
+            background-color: white;
+            border-radius: 8px;
+            box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            margin: 5vh auto;
+            height: 100vh;
+        }
+
+        .chat-header {
+            background-color: #4CAF50;
+            color: white;
+            padding: 10px;
+            text-align: center;
+            font-size: 18px;
+        }
+
+        .chat-messages {
+            flex-grow: 1;
+            padding: 10px;
+            overflow-y: auto;
+            border-bottom: 1px solid #ddd;
+            border-top: 1px solid #888;
+            position: relative;
+        }
+
+        .message {
+            margin-bottom: 10px;
+            position: relative;
+        }
+
+        .user-message {
+            color: #007bff;
+            margin-top: 20px;
+        }
+
+        .gpt-message {
+            color: #4CAF50;
+        }
+
+        .branch-button {
+            margin-left: 10px;
+            cursor: pointer;
+            font-size: 12px;
+            color: grey;
+            border: none;
+            background: none;
+            text-decoration: underline;
+        }
+
+        .branch-container {
+            margin-left: 20px;
+            border-left: 2px solid #ddd;
+            padding-left: 10px;
+            display: block !important; /* Ensure it's visible */
+        }
+
+        .error-message {
+            color: red;
+            font-weight: bold;
+        }
+
+        .branch-input-container {
+            margin-top: 15px;
+        }
+
+        .message-input {
+            display: flex;
+            align-items: center;
+            /*margin-top: 15px;*/
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            background-color: #f9f9f9;
+            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+        }
+
+        .message-input input[type="text"] {
+            flex-grow: 1;
+            padding: 8px;
+            border: 1px solid #ccc;
+            border-radius: 6px;
+            font-size: 14px;
+            outline: none;
+            margin-right: 10px;
+            transition: border-color 0.3s;
+        }
+
+        .message-input input[type="text"]:focus {
+            border-color: #007bff;
+        }
+
+        .message-input button {
+            padding: 8px 15px;
+            background-color: #007bff;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            font-size: 14px;
+            cursor: pointer;
+            transition: background-color 0.3s;
+        }
+
+        .message-input button:hover {
+            background-color: #0056b3;
+        }
+
+    </style>
+</head>
+<body>
+
+<div class="chat-container">
+    <div class="chat-header">
+        ChatGPTree
+    </div>
+    <div class="chat-messages" id="chat-messages">
+        <!-- Chat messages will be displayed here -->
+    </div>
+    <div class="chat-input message-input">
+        <input type="text" id="user-input" placeholder="Type a message...">
+        <button onclick="sendMessage()">Send</button>
+    </div>
+</div>
+
+<script>
+    const apiKey = 'API_KEY'; // Replace with your actual API key
+
+
+    class MessageNode {
+        constructor(role, content, parent = null) {
+            this.role = role;       // "user" or "assistant"
+            this.content = content; // Text
+            this.parent = parent;   // Reference to the parent MessageNode
+            this.children = [];     // Array to store child MessageNodes
+            this.element = null;    // Relevant div
+            if (parent !== null) {
+                parent.addChild(this);
+            }
+        }
+
+        // Retrieve the full conversation history from this node back to the root
+        getHistory() {
+            let history = [];
+            let node = this;
+            while (node) {
+                history.unshift({ role: node.role, content: node.content });
+                node = node.parent;
+            }
+
+            return history;
+        }
+
+        addChild(childNode) {
+            this.children.push(childNode);
+        }
+
+        isLeaf() {
+            return this.children.length === 0;
+        }
+
+        isChild() {
+            return this.parent !== null;
+        }
+
+        // For debugging
+        printHierarchy(level = 0) {
+            // Print the current node with indentation based on the level
+            console.log(`${' '.repeat(level * 2)}- ${this.role}: ${this.content}`);
+
+            // Recursively print each child node with increased indentation
+            for (const child of this.children) {
+                child.printHierarchy(level + 1);
+            }
+        }
+    }
+
+
+    function addBranchingOption(messageDiv, parentNode) {
+
+        const branchButton = document.createElement("button");
+        branchButton.textContent = parentNode.isLeaf() ? "Continue" : "Branch";
+        branchButton.classList.add("branch-button");
+
+        parentNode.element.appendChild(branchButton);
+
+        branchButton.onclick = function () {
+
+            const branchInput = document.createElement("input");
+            branchInput.type = "text";
+            branchInput.placeholder = parentNode.isLeaf() ? "Continue the thread..." : "Ask a question about this...";
+            branchInput.style.display = "block";
+
+            const branchSubmit = document.createElement("button");
+            branchSubmit.textContent = "Send";
+
+            // Create a container specifically for the branch
+            const branchInputContainer = document.createElement("div");
+            branchInputContainer.classList.add("branch-input-container", "message-input");
+            branchInputContainer.appendChild(branchInput);
+            branchInputContainer.appendChild(branchSubmit);
+
+            // Ensure the input box and button are added immediately under the current node
+            parentNode.element.appendChild(branchInputContainer);
+            branchInput.focus();    // Set focus to the input field after it's created
+            
+            function submitMessage () {
+                const userInput = branchInput.value;
+                if (userInput) {
+                    // Remove the input and button after submission
+                    branchInputContainer.remove();
+
+                    // Send the message and ensure the correct placement under the relevant node
+                    if (parentNode.isLeaf()) {
+                        // Stay at the same level for leaf continuation
+                        sendBranchMessage(userInput, messageDiv, parentNode);
+                    } else {
+                        // Nest one level deeper for branching
+                        const newBranchContainer = document.createElement("div");
+                        newBranchContainer.classList.add("branch-container");
+                        newBranchContainer.style.marginLeft = "20px";  // Indent
+
+                        // Append the new request and response directly under the current node, not at the end
+                        parentNode.element.appendChild(newBranchContainer);
+
+                        sendBranchMessage(userInput, newBranchContainer, parentNode);
+                    }
+                    
+                    document.getElementById("user-input").focus(); // Set focus back to the main input field
+                }
+            };
+
+            // Submit on Enter key press
+            branchInput.addEventListener('keydown', function (event) {
+                if (event.key === 'Enter') {
+                    event.preventDefault();
+                    submitMessage(); // Call the common submit logic
+                }
+            });
+
+            // Submit on button click
+            branchSubmit.onclick = function () {
+                submitMessage(); // Call the common submit logic
+            };
+        };
+    }
+
+
+    let model = 'gpt-4o';   // Or e.g. 'gpt-3.5-turbo'
+
+
+    function sendBranchMessage(userInput, messageDiv, parentNode) {
+        
+        // Create a new node for this message and add it to the conversation tree via parentNode
+        const userMessageNode = new MessageNode("user", userInput, parentNode);
+
+        // Ensure any "continue" is "branch"
+        parentNode.element.querySelector('button').textContent = "Branch";
+        
+        const userMessageDiv = document.createElement("div");
+        userMessageDiv.classList.add("message", "user-message");
+        userMessageDiv.textContent = "You: " + userInput;
+        messageDiv.appendChild(userMessageDiv);  // Add to the correct container
+        userMessageNode.element = userMessageDiv;
+
+        // Get the correct history from the current node to the root
+        const history = userMessageNode.getHistory();
+        console.log("History sent to GPT API:", history);
+
+        // Call GPT API with the history
+        fetch('https://api.openai.com/v1/chat/completions', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${apiKey}`
+            },
+            body: JSON.stringify({
+                model: model,
+                messages: history
+            })
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.error) {
+                throw new Error(data.error.message);
+            }
+
+            const gptMessageNode = new MessageNode("assistant", data.choices[0].message.content, userMessageNode);
+
+            const gptMessageDiv = document.createElement("div");
+            gptMessageDiv.classList.add("message", "gpt-message");
+            gptMessageDiv.textContent = "GPT: " + data.choices[0].message.content;
+            messageDiv.appendChild(gptMessageDiv);  // Append GPT response directly under the current node
+
+            gptMessageNode.element = gptMessageDiv;
+
+            addBranchingOption(messageDiv, gptMessageNode); 
+        })
+        .catch(error => {
+            const errorDiv = document.createElement("div");
+            errorDiv.classList.add("message", "error-message");
+            errorDiv.textContent = "Error: " + error.message;
+            messageDiv.appendChild(errorDiv);
+        });
+    }
+
+
+    let rootMessageNode = null;     // The root of the conversation
+    let lastGPTMessageNode = null;  // Track the last GPT message in the main conversation thread
+
+
+    async function sendMessage() {
+        const userInput = document.getElementById("user-input").value;
+        if (!userInput) return;
+
+        document.getElementById('user-input').focus(); // Set focus back to the text input
+
+        // Create a new node for the message
+        let currentNode;
+        if (!rootMessageNode) {
+            rootMessageNode = new MessageNode("user", userInput);
+            currentNode = rootMessageNode;
+        } else {
+            const newUserNode = new MessageNode("user", userInput, lastGPTMessageNode);
+            currentNode = newUserNode;
+        }
+
+        // Display user message
+        const messagesDiv = document.getElementById("chat-messages");
+        const userMessageDiv = document.createElement("div");
+        userMessageDiv.classList.add("message", "user-message");
+        userMessageDiv.textContent = "You: " + userInput;
+        messagesDiv.appendChild(userMessageDiv);
+
+        currentNode.element = userMessageDiv;
+
+        messagesDiv.scrollTop = messagesDiv.scrollHeight; // Scroll to the bottom of the chat
+        document.getElementById("user-input").value = ""; // Clear input field
+
+        // Call GPT API with history
+        const history = currentNode.getHistory();
+        console.log("History sent to GPT API:", history); // Log the history being sent
+        const response = await fetch('https://api.openai.com/v1/chat/completions', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${apiKey}`
+            },
+            body: JSON.stringify({
+                model: model,
+                messages: history
+            })
+        });
+
+        const data = await response.json();
+        console.log("GPT API response:", data); // Log the API response
+
+        if (data.error) {
+            const errorDiv = document.createElement("div");
+            errorDiv.classList.add("message", "error-message");
+            errorDiv.textContent = "Error: " + data.error.message;
+            messagesDiv.appendChild(errorDiv);
+        }
+
+        // Add GPT response to chat
+        const gptMessageDiv = document.createElement("div");
+        gptMessageDiv.classList.add("message", "gpt-message");
+        gptMessageDiv.textContent = "GPT: " + data.choices[0].message.content;
+        messagesDiv.appendChild(gptMessageDiv);
+
+        const gptMessageNode = new MessageNode("assistant", data.choices[0].message.content, currentNode);
+        currentNode = gptMessageNode;
+
+        gptMessageNode.element = gptMessageDiv;
+
+        // Scroll to the bottom after adding GPT response
+        messagesDiv.scrollTop = messagesDiv.scrollHeight;
+
+        // Add the branch button to the previous GPT message (if any)
+        if (lastGPTMessageNode !== null) {
+            addBranchingOption(lastGPTMessageNode.element, lastGPTMessageNode);
+        }
+
+        // Update the lastGPTMessageNode to track the latest response
+        lastGPTMessageNode = gptMessageNode;
+    }
+
+    // Attach Enter key event listener to the input field
+    document.getElementById("user-input").addEventListener("keydown", function(event) {
+        if (event.key === "Enter") {
+            event.preventDefault();  // Prevent default Enter behavior (like submitting a form)
+            sendMessage();           // Call the sendMessage function
+        }
+    });
+
+</script>
+
+</body>
+</html>
